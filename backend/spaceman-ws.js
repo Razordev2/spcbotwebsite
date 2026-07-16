@@ -13,7 +13,7 @@ class SpacemanWSClient {
     this.gameWs = null;
     this.broadcastWs = null;
     this.pollInterval = null;
-    this.jsessionId = process.env.JSESSIONID;
+    this.jsessionId = process.env.JSESSIONID || '4-zi-uQtQxBda3Ny4wqpDKrdygkjtvK_YY34P_9Zd__G2jAb_-gn!021770770-f2d7d982';
     
     // Game state tracking
     this.currentGameState = {
