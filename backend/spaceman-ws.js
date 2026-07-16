@@ -79,11 +79,9 @@ class SpacemanWSClient {
           this.broadcastAnalysis();
         } else {
           console.warn(`[HTTP] Could not parse history array. Received structure:`, response.data.history.slice(0, 2));
-          this.loadMockHistory();
         }
       } else {
-        console.warn(`[HTTP] Unexpected history response structure. Loading fallback local data.`);
-        this.loadMockHistory();
+        console.warn(`[HTTP] Unexpected history response structure.`);
       }
     } catch (error) {
       if (error.response && error.response.status === 401) {
@@ -94,8 +92,7 @@ class SpacemanWSClient {
           return this.fetchHistory();
         }
       }
-      console.error(`[HTTP] Error fetching statistics history: ${error.message}. Loading fallback data.`);
-      this.loadMockHistory();
+      console.error(`[HTTP] Error fetching statistics history: ${error.message}`);
     }
   }
 
@@ -136,7 +133,7 @@ class SpacemanWSClient {
     this.connectGameWS();
     this.connectBroadcastWS();
     this.startPollingFallback();
-    this.startWatchdog();
+    // Watchdog and simulation are disabled to keep data strictly real-time.
   }
 
   // WS: Game Client (wss://gs17.domxyrxsfevpzjeg.net/game)

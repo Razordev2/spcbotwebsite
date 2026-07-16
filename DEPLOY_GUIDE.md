@@ -63,6 +63,9 @@ Oleh karena itu, strategi deploy terbaik adalah:
 
 ---
 
-> [!WARNING]
-> **Penting untuk Diperhatikan:**
-> Nilai `JSESSIONID` yang diberikan oleh game client memiliki masa kedaluwarsa (expired). Jika di dashboard statusnya berubah menjadi **DISCONNECTED** atau data game terhenti, Anda hanya perlu mengambil `JSESSIONID` baru dari link game client Anda, lalu memperbaruinya di file `.env` (lokal) atau di menu Environment Variables dashboard Render/Railway Anda, lalu restart server backend-nya.
+> [!TIP]
+> **Deteksi Otomatis & Sinkronisasi Tanpa Copy-Paste!**
+> Sistem ini telah diintegrasikan sepenuhnya dengan ekstensi Chrome (**Spaceman Tracker**). 
+> - Ketika ekstensi berjalan di browser Anda dan mendeteksi aktivitas game Spaceman, ia akan secara otomatis menangkap `JSESSIONID` baru secara real-time.
+> - Ekstensi kemudian akan langsung mengirimkan `JSESSIONID` baru tersebut ke website dashboard (Vercel) dan memperbarui backend server Anda (Render/Railway) secara otomatis.
+> - **Tidak perlu melakukan salin-tempel (copy-paste) manual atau restart server lagi!** Cukup buka game Spaceman di browser Anda, dan sistem akan tersinkronisasi secara otomatis.

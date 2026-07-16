@@ -159,14 +159,13 @@ document.addEventListener('DOMContentLoaded', () => {
             stopSimulation();
           }
         } else {
-          loadMockHistory();
+          console.warn(`[HTTP] History multipliers empty.`);
         }
       } else {
-        loadMockHistory();
+        console.warn(`[HTTP] Unexpected history response structure.`);
       }
     } catch (error) {
-      console.error(`[HTTP] Error fetching history: ${error.message}. Loading fallback data.`);
-      loadMockHistory();
+      console.error(`[HTTP] Error fetching history: ${error.message}`);
     }
   }
 
@@ -404,16 +403,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // WATCHDOG TIMER FOR AUTO-SIMULATING FALLBACK
+  // Watchdog timer is disabled to keep data strictly real-time.
   function startWatchdog() {
-    if (watchdogInterval) clearInterval(watchdogInterval);
-    watchdogInterval = setInterval(() => {
-      // If no updates in 15 seconds, start simulation so the dashboard remains active
-      if (Date.now() - lastLiveTickTime > 15000 && !isSimulating) {
-        console.log(`[WATCHDOG] No live game messages received for 15 seconds. Activating client-side simulator...`);
-        startSimulation();
-      }
-    }, 5000);
+    // No-op
   }
 
   function startSimulation() {
@@ -699,9 +691,19 @@ document.addEventListener('DOMContentLoaded', () => {
     connectBroadcastWS();
     
     // Launch watchdogs
-    startWatchdog();
+    // startWatchdog() is disabled to keep data strictly real-time.
     startPollingFallback();
   }
+
+  // Listen for automatic session updates from the Chrome extension
+  window.addEventListener('spaceman_session_updated', (e) => {
+    console.log(`[App] Session updated automatically via Chrome extension: ${e.detail}`);
+    jsessionId = e.detail;
+    if (jsessionIdInput) {
+      jsessionIdInput.value = jsessionId;
+    }
+    initSystem();
+  });
 
   initSystem();
 });
