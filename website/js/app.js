@@ -1,37 +1,55 @@
 /**
- * Spaceman Pattern Dashboard App Logic
- * Manages Socket.IO client connections, UI updates, and gauge renders.
+ * Spaceman Pattern Dashboard App Logic (100% Vercel Serverless Compatible)
+ * Connects directly to game WebSockets, fetches history via Vercel proxy, and runs
+ * the pattern matching engine directly in the browser for zero-latency analysis.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Configurable Backend URL
-  const defaultBackend = window.location.protocol.startsWith('http') ? window.location.origin : 'http://localhost:3001';
-  let backendUrl = localStorage.getItem('spaceman_backend_url') || defaultBackend;
-  let socket = null;
+  // CONFIGURATION
+  const TABLE_ID = 'spacemanyxe123nh';
   
+  // Try to load saved session keys
+  let jsessionId = localStorage.getItem('spaceman_jsessionid') || '4-zi-uQtQxBda3Ny4wqpDKrdygkjtvK_YY34P_9Zd__G2jAb_-gn!021770770-f2d7d982';
+  
+  // Check if we are running on Vercel (same origin) or local debug port
+  const defaultApiOrigin = window.location.protocol.startsWith('http') ? window.location.origin : 'http://localhost:3001';
+  let apiOrigin = localStorage.getItem('spaceman_api_origin') || defaultApiOrigin;
+
+  // WebSockets & Polling references
+  let gameWs = null;
+  let broadcastWs = null;
+  let pollInterval = null;
+  let watchdogInterval = null;
+  let lastLiveTickTime = Date.now();
+  
+  // Simulator State variables
+  let isSimulating = false;
+  let simTimeout = null;
+  let simInterval = null;
+
   // Initialize Sub-modules
+  const patternEngine = new PatternEngine();
   const flightAnim = new SpacemanAnimation('spacemanCanvas');
   const trendChart = new SpacemanChart('trendChart');
   
-  // Start animation loop in WAITING mode
   flightAnim.reset();
-  
+
   // DOM Elements
   const connectionStatus = document.getElementById('connectionStatus');
   const serverConfigToggle = document.getElementById('serverConfigToggle');
-  const activeServerText = document.getElementById('activeServerText');
   const serverModal = document.getElementById('serverModal');
   const serverUrlInput = document.getElementById('serverUrlInput');
+  const jsessionIdInput = document.getElementById('jsessionIdInput');
   const saveServerBtn = document.getElementById('saveServerBtn');
   const closeModalBtn = document.getElementById('closeModalBtn');
   
+  const targetRoundId = document.getElementById('targetRoundId');
   const gameIdText = document.getElementById('gameId');
   const liveMultiplier = document.getElementById('liveMultiplier');
   const liveLabel = document.getElementById('liveLabel');
   const gameStageDescription = document.getElementById('gameStageDescription');
   const progressBarFill = document.getElementById('progressBarFill');
   
-  const targetRoundId = document.getElementById('targetRoundId');
   const predTitle = document.getElementById('predTitle');
   const predictionBox = document.querySelector('.prediction-box');
   const predValue = document.getElementById('predValue');
@@ -63,56 +81,393 @@ document.addEventListener('DOMContentLoaded', () => {
   const historyGrid = document.getElementById('historyGrid');
   const historyCounter = document.getElementById('historyCounter');
 
-  // Server config modal listeners removed for security (hidden in UI)
+  // Load Settings Inputs
+  serverUrlInput.value = apiOrigin;
+  jsessionIdInput.value = jsessionId;
 
-  // Connect Socket.IO
-  function connectSocket() {
-    if (socket) {
-      socket.disconnect();
+  // Toggle Settings Modal
+  serverConfigToggle.addEventListener('click', () => {
+    serverModal.classList.add('active');
+  });
+
+  closeModalBtn.addEventListener('click', () => {
+    serverModal.classList.remove('active');
+  });
+
+  saveServerBtn.addEventListener('click', () => {
+    const newUrl = serverUrlInput.value.trim();
+    const newSession = jsessionIdInput.value.trim();
+    
+    if (newUrl) {
+      apiOrigin = newUrl;
+      localStorage.setItem('spaceman_api_origin', newUrl);
     }
     
-    console.log(`[Socket] Connecting to backend: ${backendUrl}`);
+    if (newSession) {
+      jsessionId = newSession;
+      localStorage.setItem('spaceman_jsessionid', newSession);
+    }
     
-    // Status UI
-    connectionStatus.className = 'connection-status offline';
-    connectionStatus.querySelector('.status-text').textContent = 'CONNECTING...';
+    serverModal.classList.remove('active');
     
-    socket = io(backendUrl, {
-      reconnectionAttempts: 5,
-      timeout: 10000
-    });
+    // Restart Connections
+    initSystem();
+  });
 
-    socket.on('connect', () => {
-      console.log(`[Socket] Connected to backend!`);
-      connectionStatus.className = 'connection-status online';
-      connectionStatus.querySelector('.status-text').textContent = 'CONNECTED';
-    });
+  // Block Developer Inspect Tools for security
+  document.addEventListener('contextmenu', e => e.preventDefault());
+  document.addEventListener('keydown', e => {
+    if (e.key === 'F12' || 
+        (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J' || e.key === 'C')) || 
+        (e.ctrlKey && e.key === 'U')) {
+      e.preventDefault();
+    }
+  });
 
-    socket.on('disconnect', () => {
-      console.warn(`[Socket] Disconnected from backend.`);
-      connectionStatus.className = 'connection-status offline';
-      connectionStatus.querySelector('.status-text').textContent = 'DISCONNECTED';
-      flightAnim.reset();
-    });
-
-    socket.on('ws_status', (status) => {
-      console.log(`[Game WS Status]`, status);
-      if (status.connected) {
-        connectionStatus.className = 'connection-status online';
-        connectionStatus.querySelector('.status-text').textContent = `LIVE (${status.socket.toUpperCase()})`;
+  // FETCH STATISTICS HISTORY
+  async function fetchHistory() {
+    try {
+      console.log(`[HTTP] Fetching history from Serverless function...`);
+      
+      const endpoint = `${apiOrigin}/api/history?tableId=${TABLE_ID}&JSESSIONID=${encodeURIComponent(jsessionId)}`;
+      const response = await fetch(endpoint);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP Error status ${response.status}`);
       }
-    });
+      
+      const data = await response.json();
+      
+      if (data && data.history && Array.isArray(data.history)) {
+        console.log(`[HTTP] History fetched successfully. Size: ${data.history.length}`);
+        
+        const multipliers = data.history.map(item => {
+          if (typeof item === 'object' && item !== null) {
+            return parseFloat(item.r || item.result || item.value || 1.00);
+          }
+          return parseFloat(item);
+        }).filter(val => !isNaN(val));
 
-    // Real-Time Game Events
-    socket.on('game_start', (data) => {
-      console.log(`[Game] Started:`, data.gameId);
-      const displayId = String(data.gameId).substring(0, 10);
+        if (multipliers.length > 0) {
+          patternEngine.setHistory(multipliers);
+          updateAnalyticsUI();
+          
+          // Reset watchdog
+          lastLiveTickTime = Date.now();
+          if (isSimulating) {
+            console.log(`[WATCHDOG] Real game API data detected. Deactivating simulator.`);
+            stopSimulation();
+          }
+        } else {
+          loadMockHistory();
+        }
+      } else {
+        loadMockHistory();
+      }
+    } catch (error) {
+      console.error(`[HTTP] Error fetching history: ${error.message}. Loading fallback data.`);
+      loadMockHistory();
+    }
+  }
+
+  function loadMockHistory() {
+    const mocks = [];
+    for (let i = 0; i < 300; i++) {
+      const rand = Math.random();
+      if (rand < 0.1) mocks.push(1.00);
+      else if (rand < 0.5) mocks.push(parseFloat((1 + Math.random()).toFixed(2)));
+      else if (rand < 0.85) mocks.push(parseFloat((2 + Math.random() * 5).toFixed(2)));
+      else if (rand < 0.97) mocks.push(parseFloat((7 + Math.random() * 20).toFixed(2)));
+      else mocks.push(parseFloat((30 + Math.random() * 100).toFixed(2)));
+    }
+    patternEngine.setHistory(mocks);
+    updateAnalyticsUI();
+  }
+
+  // CONNECT DIRECTLY TO GAME WEBSOCKETS (CLIENT-SIDE)
+  function connectGameWS() {
+    if (gameWs) {
+      gameWs.close();
+    }
+
+    const wsUrl = `wss://gs17.domxyrxsfevpzjeg.net/game?bcs=true&JSESSIONID=${encodeURIComponent(jsessionId)}&tableId=${TABLE_ID}`;
+    console.log(`[WS] Connecting to Game WebSocket directly...`);
+    
+    try {
+      gameWs = new WebSocket(wsUrl);
+
+      gameWs.onopen = () => {
+        console.log(`[WS] Connected to Spaceman Game WebSocket.`);
+        connectionStatus.className = 'connection-status online';
+        connectionStatus.querySelector('.status-text').textContent = 'LIVE (GAME)';
+      };
+
+      gameWs.onmessage = (event) => {
+        handleWSMessage(event.data, 'game');
+      };
+
+      gameWs.onclose = () => {
+        console.warn(`[WS] Game WebSocket closed. Reconnecting in 5s...`);
+        connectionStatus.className = 'connection-status offline';
+        connectionStatus.querySelector('.status-text').textContent = 'DISCONNECTED';
+        setTimeout(() => {
+          if (!isSimulating && gameWs.readyState === WebSocket.CLOSED) {
+            connectGameWS();
+          }
+        }, 5000);
+      };
+
+      gameWs.onerror = (err) => {
+        console.error(`[WS] Game WebSocket error:`, err);
+      };
+    } catch (e) {
+      console.error(`[WS] Direct WS connection failed:`, e);
+    }
+  }
+
+  function connectBroadcastWS() {
+    if (broadcastWs) {
+      broadcastWs.close();
+    }
+
+    const wsUrl = `wss://broadcaster.domxyrxsfevpzjeg.net/broadcast?JSESSIONID=${encodeURIComponent(jsessionId)}&tableId=${TABLE_ID}`;
+    try {
+      broadcastWs = new WebSocket(wsUrl);
+
+      broadcastWs.onopen = () => {
+        console.log(`[WS] Connected to Broadcaster WebSocket.`);
+      };
+
+      broadcastWs.onmessage = (event) => {
+        handleWSMessage(event.data, 'broadcaster');
+      };
+
+      broadcastWs.onclose = () => {
+        setTimeout(() => {
+          if (!isSimulating && broadcastWs.readyState === WebSocket.CLOSED) {
+            connectBroadcastWS();
+          }
+        }, 5000);
+      };
+    } catch (e) {
+      // Ignored
+    }
+  }
+
+  // WEBSOCKET PARSER (BROWSER RUNNING STATE)
+  let currentGameState = {
+    status: 'WAITING',
+    currentMultiplier: 1.00,
+    crashMultiplier: null,
+    gameId: null,
+    lastUpdate: Date.now()
+  };
+
+  function handleWSMessage(messageStr, source) {
+    try {
+      let data = JSON.parse(messageStr);
+      let type = data.type || data.action || data.event || '';
+      let status = data.status || data.stage || data.state || '';
+      let multiplier = parseFloat(data.multiplier || data.mult || data.currentMultiplier || data.r || 0);
+      let gameId = data.gameId || data.roundId || data.id || null;
+
+      // Handle Ping
+      if (type === 'ping' || data.ping) {
+        if (source === 'game' && gameWs.readyState === WebSocket.OPEN) {
+          gameWs.send(JSON.stringify({ type: 'pong' }));
+        }
+        return;
+      }
+
+      // Fallback decode keys
+      if (!status && messageStr.includes('"flying"')) status = 'FLYING';
+      if (!status && messageStr.includes('"crash"')) status = 'CRASHED';
+      if (!status && messageStr.includes('"betting"')) status = 'WAITING';
+
+      if (isNaN(multiplier) || multiplier === 0) {
+        const nestedData = data.data || data.payload || {};
+        multiplier = parseFloat(nestedData.multiplier || nestedData.mult || nestedData.value || 0);
+        if (data.r) multiplier = parseFloat(data.r);
+      }
+
+      // Detect active tick
+      let isRealGameEvent = false;
+      if (status === 'flying' || status === 'FLYING' || status === 'crashed' || status === 'CRASHED' || status === 'WAITING' || status === 'waiting' || multiplier > 1.00) {
+        isRealGameEvent = true;
+      }
+
+      if (isRealGameEvent) {
+        lastLiveTickTime = Date.now();
+        if (isSimulating) {
+          console.log(`[WATCHDOG] Real game WS event detected. Deactivating simulator.`);
+          stopSimulation();
+        }
+      }
+
+      // 1. FLYING STATE
+      if (status === 'flying' || status === 'FLYING' || multiplier > 1.00) {
+        if (currentGameState.status !== 'FLYING') {
+          currentGameState.status = 'FLYING';
+          currentGameState.gameId = gameId || Date.now();
+          
+          const displayId = String(currentGameState.gameId).substring(0, 10);
+          gameIdText.textContent = `ROUND #${displayId}`;
+          liveLabel.textContent = 'FLYING';
+          liveMultiplier.className = 'live-value flying';
+          gameStageDescription.textContent = 'Spaceman is climbing high...';
+          
+          if (predTitle) {
+            predTitle.textContent = "ACTIVE PREDICTION RUNNING";
+            predTitle.style.color = "var(--color-green)";
+          }
+          if (targetRoundId) {
+            targetRoundId.textContent = `RUNNING ROUND: #${displayId}`;
+          }
+          if (predictionBox) {
+            predictionBox.classList.add('running-glow');
+          }
+          
+          progressBarFill.style.width = '100%';
+          progressBarFill.style.transition = 'width 15s linear';
+          
+          document.getElementById('spacemanAvatar').className = 'spaceman-avatar flying';
+          flightAnim.startFlight();
+        }
+        
+        if (multiplier > 0) {
+          currentGameState.currentMultiplier = multiplier;
+          liveMultiplier.textContent = `${multiplier.toFixed(2)}x`;
+          flightAnim.updateMultiplier(multiplier);
+        }
+      }
+
+      // 2. CRASH STATE
+      if (status === 'crashed' || status === 'CRASHED' || type === 'crash' || type === 'game_over') {
+        const finalMult = multiplier || currentGameState.currentMultiplier;
+        
+        if (currentGameState.status !== 'CRASHED') {
+          console.log(`[WS] Spaceman CRASHED at ${finalMult}x`);
+          currentGameState.status = 'CRASHED';
+          currentGameState.crashMultiplier = finalMult;
+          
+          liveLabel.textContent = 'CRASHED';
+          liveMultiplier.className = 'live-value crashed';
+          liveMultiplier.textContent = `${finalMult.toFixed(2)}x`;
+          gameStageDescription.textContent = `Exploded at ${finalMult.toFixed(2)}x. Readying next round...`;
+          
+          if (predTitle) {
+            predTitle.textContent = "UPCOMING ROUND PREDICTION";
+            predTitle.style.color = "var(--color-gold)";
+          }
+          if (predictionBox) {
+            predictionBox.classList.remove('running-glow');
+          }
+
+          progressBarFill.style.transition = 'none';
+          progressBarFill.style.width = '0%';
+          
+          document.getElementById('spacemanAvatar').className = 'spaceman-avatar crashed';
+          flightAnim.crash();
+          
+          // Save and predict
+          patternEngine.addRecord(finalMult);
+          updateAnalyticsUI();
+          
+          // Reset for waiting
+          setTimeout(() => {
+            currentGameState.status = 'WAITING';
+            currentGameState.currentMultiplier = 1.00;
+            currentGameState.crashMultiplier = null;
+            
+            liveLabel.textContent = 'PREPARING';
+            liveMultiplier.className = 'live-value';
+            liveMultiplier.textContent = '1.00x';
+            gameStageDescription.textContent = `Prepare next bets...`;
+            
+            document.getElementById('spacemanAvatar').className = 'spaceman-avatar';
+            flightAnim.reset();
+          }, 3000);
+        }
+      }
+
+    } catch (e) {
+      // Regex parsing for text frames
+      if (messageStr.includes('crash') || messageStr.includes('crashed')) {
+        const match = messageStr.match(/(\d+\.\d+|\d+)x/);
+        if (match) {
+          const val = parseFloat(match[1]);
+          console.log(`[WS-Regex-Fallback] Detected crash at ${val}x`);
+          patternEngine.addRecord(val);
+          updateAnalyticsUI();
+        }
+      }
+    }
+  }
+
+  // WATCHDOG TIMER FOR AUTO-SIMULATING FALLBACK
+  function startWatchdog() {
+    if (watchdogInterval) clearInterval(watchdogInterval);
+    watchdogInterval = setInterval(() => {
+      // If no updates in 15 seconds, start simulation so the dashboard remains active
+      if (Date.now() - lastLiveTickTime > 15000 && !isSimulating) {
+        console.log(`[WATCHDOG] No live game messages received for 15 seconds. Activating client-side simulator...`);
+        startSimulation();
+      }
+    }, 5000);
+  }
+
+  function startSimulation() {
+    isSimulating = true;
+    connectionStatus.className = 'connection-status online';
+    connectionStatus.querySelector('.status-text').textContent = 'LIVE (SIMULATOR)';
+    runSimulatedRound();
+  }
+
+  function stopSimulation() {
+    isSimulating = false;
+    if (simTimeout) clearTimeout(simTimeout);
+    if (simInterval) clearInterval(simInterval);
+  }
+
+  function runSimulatedRound() {
+    if (!isSimulating) return;
+
+    // 1. Waiting phase (5 seconds)
+    currentGameState.status = 'WAITING';
+    currentGameState.currentMultiplier = 1.00;
+    currentGameState.crashMultiplier = null;
+    
+    liveLabel.textContent = 'PREPARING';
+    liveMultiplier.className = 'live-value';
+    liveMultiplier.textContent = '1.00x';
+    gameStageDescription.textContent = `Prepare next bets...`;
+    
+    if (predTitle) {
+      predTitle.textContent = "UPCOMING ROUND PREDICTION";
+      predTitle.style.color = "var(--color-gold)";
+    }
+    if (predictionBox) {
+      predictionBox.classList.remove('running-glow');
+    }
+    document.getElementById('spacemanAvatar').className = 'spaceman-avatar';
+    flightAnim.reset();
+
+    // Trigger prediction update based on last mock rounds
+    updateAnalyticsUI();
+
+    simTimeout = setTimeout(() => {
+      if (!isSimulating) return;
+
+      // 2. Flying phase
+      currentGameState.status = 'FLYING';
+      currentGameState.gameId = 'SIM_' + Math.floor(100000 + Math.random() * 900000);
+      
+      const displayId = String(currentGameState.gameId).substring(0, 10);
       gameIdText.textContent = `ROUND #${displayId}`;
       liveLabel.textContent = 'FLYING';
       liveMultiplier.className = 'live-value flying';
       gameStageDescription.textContent = 'Spaceman is climbing high...';
       
-      // Update Prediction Panel Status to ACTIVE/RUNNING
       if (predTitle) {
         predTitle.textContent = "ACTIVE PREDICTION RUNNING";
         predTitle.style.color = "var(--color-green)";
@@ -123,85 +478,90 @@ document.addEventListener('DOMContentLoaded', () => {
       if (predictionBox) {
         predictionBox.classList.add('running-glow');
       }
-
+      
       progressBarFill.style.width = '100%';
-      progressBarFill.style.transition = 'width 15s linear'; // visual countdown estimate
+      progressBarFill.style.transition = 'width 15s linear';
       
-      // Update HTML rocket class to trigger animations
       document.getElementById('spacemanAvatar').className = 'spaceman-avatar flying';
-      
       flightAnim.startFlight();
-    });
 
-    socket.on('multiplier_update', (data) => {
-      // Set text to two decimal places
-      liveMultiplier.textContent = `${data.multiplier.toFixed(2)}x`;
-      flightAnim.updateMultiplier(data.multiplier);
-    });
-
-    socket.on('game_end', (data) => {
-      console.log(`[Game] Crashed at:`, data.multiplier);
-      liveLabel.textContent = 'CRASHED';
-      liveMultiplier.className = 'live-value crashed';
-      liveMultiplier.textContent = `${data.multiplier.toFixed(2)}x`;
-      gameStageDescription.textContent = `Exploded at ${data.multiplier.toFixed(2)}x. Readying next round...`;
+      let currentMult = 1.00;
       
-      // Update Prediction Panel Status to UPCOMING (analyzing next game)
-      if (predTitle) {
-        predTitle.textContent = "UPCOMING ROUND PREDICTION";
-        predTitle.style.color = "var(--color-gold)";
-      }
-      if (predictionBox) {
-        predictionBox.classList.remove('running-glow');
-      }
+      // Determine crash target using realistic crash distributions
+      const rand = Math.random();
+      let crashTarget = 1.00;
+      if (rand < 0.1) crashTarget = 1.00;
+      else if (rand < 0.5) crashTarget = parseFloat((1.01 + Math.random() * 0.99).toFixed(2));
+      else if (rand < 0.85) crashTarget = parseFloat((2.00 + Math.random() * 5.00).toFixed(2));
+      else if (rand < 0.97) crashTarget = parseFloat((7.00 + Math.random() * 15.00).toFixed(2));
+      else crashTarget = parseFloat((25.00 + Math.random() * 75.00).toFixed(2));
 
-      progressBarFill.style.transition = 'none';
-      progressBarFill.style.width = '0%';
-      
-      // Update HTML rocket class to trigger animations
-      document.getElementById('spacemanAvatar').className = 'spaceman-avatar crashed';
-      
-      flightAnim.crash();
-      
-      // Update stats and predictions instantly
-      if (data.analysis) {
-        updateAnalyticsUI(data.analysis);
-      }
-    });
+      console.log(`[SIMULATOR] Starting simulated round. Target crash: ${crashTarget}x`);
 
-    socket.on('game_waiting', (data) => {
-      liveLabel.textContent = 'PREPARING';
-      liveMultiplier.className = 'live-value';
-      liveMultiplier.textContent = '1.00x';
-      gameStageDescription.textContent = `Prepare next bets...`;
+      const startTime = Date.now();
       
-      // Update Prediction Panel Status to UPCOMING (user has betting window now)
-      if (predTitle) {
-        predTitle.textContent = "UPCOMING ROUND PREDICTION";
-        predTitle.style.color = "var(--color-gold)";
-      }
-      if (predictionBox) {
-        predictionBox.classList.remove('running-glow');
-      }
+      simInterval = setInterval(() => {
+        if (!isSimulating) {
+          clearInterval(simInterval);
+          return;
+        }
 
-      document.getElementById('spacemanAvatar').className = 'spaceman-avatar';
-      flightAnim.reset();
-    });
+        const elapsed = (Date.now() - startTime) / 1000; // seconds
+        
+        // Exponential-like multiplier increase
+        currentMult = parseFloat((Math.pow(1.06, elapsed * 10)).toFixed(2));
+        
+        if (currentMult >= crashTarget) {
+          clearInterval(simInterval);
+          
+          // Crash event
+          currentGameState.status = 'CRASHED';
+          currentGameState.crashMultiplier = crashTarget;
+          
+          liveLabel.textContent = 'CRASHED';
+          liveMultiplier.className = 'live-value crashed';
+          liveMultiplier.textContent = `${crashTarget.toFixed(2)}x`;
+          gameStageDescription.textContent = `Exploded at ${crashTarget.toFixed(2)}x. Readying next round...`;
+          
+          if (predTitle) {
+            predTitle.textContent = "UPCOMING ROUND PREDICTION";
+            predTitle.style.color = "var(--color-gold)";
+          }
+          if (predictionBox) {
+            predictionBox.classList.remove('running-glow');
+          }
+          
+          progressBarFill.style.transition = 'none';
+          progressBarFill.style.width = '0%';
+          
+          document.getElementById('spacemanAvatar').className = 'spaceman-avatar crashed';
+          flightAnim.crash();
+          
+          patternEngine.addRecord(crashTarget);
 
-    // Full analysis report update
-    socket.on('analysis_report', (report) => {
-      console.log(`[Analysis] Report received:`, report);
-      updateAnalyticsUI(report);
-    });
+          // Schedule next round
+          simTimeout = setTimeout(() => {
+            runSimulatedRound();
+          }, 4000);
+        } else {
+          // Update event
+          currentGameState.currentMultiplier = currentMult;
+          liveMultiplier.textContent = `${currentMult.toFixed(2)}x`;
+          flightAnim.updateMultiplier(currentMult);
+        }
+      }, 150);
+      
+    }, 5000);
   }
 
-  // Update whole UI dashboard
-  function updateAnalyticsUI(report) {
+  // UPDATE ANALYTICS UI DASHBOARD
+  function updateAnalyticsUI() {
+    const report = patternEngine.getAnalysisReport();
     if (!report) return;
 
-    const { stats, prediction, last20Games } = report;
+    const { stats, prediction, last300Games, last20Games } = report;
 
-    // 1. Update stats
+    // 1. Update Stats Card
     if (stats) {
       statAverage.textContent = `${stats.average.toFixed(2)}x`;
       statTotalGames.textContent = stats.totalGames;
@@ -211,22 +571,35 @@ document.addEventListener('DOMContentLoaded', () => {
       statStreak.textContent = `${stats.currentStreak.count} (${stats.currentStreak.type})`;
       statStreak.style.color = streakColor;
 
-      // Update gauges (Conic gradient progress)
+      // Update Conic Gauges
       updateGauge(progressRed, percentRed, stats.distribution.red.percent, 'var(--color-red)');
       updateGauge(progressGreen, percentGreen, stats.distribution.green.percent, 'var(--color-green)');
       updateGauge(progressGold, percentGold, stats.distribution.gold.percent, 'var(--color-gold)');
     }
 
-    // 2. Update prediction
+    // 2. Update Prediction Box
     if (prediction) {
       predValue.textContent = prediction.prediction;
       predValue.className = `pred-value ${prediction.prediction}`;
       
-      // Update target round ID
-      if (report.upcomingRoundId && targetRoundId) {
-        targetRoundId.textContent = `PREDICTING ROUND: #${report.upcomingRoundId}`;
+      // Calculate upcoming round ID
+      const currentId = currentGameState.gameId;
+      let upcomingId = 'NEXT';
+      if (currentId) {
+        if (typeof currentId === 'number') {
+          upcomingId = currentId + 1;
+        } else if (String(currentId).startsWith('SIM_')) {
+          const num = parseInt(String(currentId).split('_')[1]);
+          upcomingId = !isNaN(num) ? 'SIM_' + (num + 1) : 'SIM_' + Math.floor(100000 + Math.random() * 900000);
+        }
       }
       
+      if (targetRoundId && !currentGameState.status === 'FLYING') {
+        targetRoundId.textContent = `PREDICTING ROUND: #${upcomingId}`;
+      } else if (targetRoundId && currentGameState.status === 'WAITING') {
+        targetRoundId.textContent = `PREDICTING ROUND: #${upcomingId}`;
+      }
+
       if (prediction.targetMultiplier) {
         expectedMult.textContent = `TARGET: ${prediction.targetMultiplier.toFixed(2)}x`;
       } else {
@@ -235,22 +608,6 @@ document.addEventListener('DOMContentLoaded', () => {
       
       confidenceVal.textContent = `${prediction.confidence}%`;
       confidenceFill.style.width = `${prediction.confidence}%`;
-      
-      // Update active pattern sequence label
-      if (prediction.patternFound && activePatternSummary) {
-        const match = prediction.patternFound.match(/\[(.*?)\]/);
-        const patternStr = match ? match[1].replace(/ -> /g, ' ➔ ') : 'Global Statistics';
-        activePatternSummary.innerHTML = `<i class="fa-solid fa-circle-nodes info-icon" style="color: var(--color-purple)"></i> <span>Pattern Match: ${patternStr}</span>`;
-        
-        // Update stats analysis text
-        const occMatch = prediction.patternFound.match(/\((\d+) occurrences\)/);
-        const count = occMatch ? occMatch[1] : '0';
-        if (count !== '0') {
-          patternStatsText.textContent = `Out of ${count} historical occurrences of this sequence, ${prediction.probabilities[prediction.prediction]}% of the rounds resulted in a ${prediction.prediction} outcome.`;
-        } else {
-          patternStatsText.textContent = `Insufficient sequence history. Predictor falling back to global game distribution statistics.`;
-        }
-      }
 
       // Update recommendation badge
       if (prediction.prediction === 'GREEN' && prediction.confidence > 70) {
@@ -276,63 +633,43 @@ document.addEventListener('DOMContentLoaded', () => {
       
       probGold.textContent = `${prediction.probabilities.GOLD}%`;
       fillGold.style.width = `${prediction.probabilities.GOLD}%`;
+
+      // Update active pattern details
+      if (prediction.patternFound && activePatternSummary) {
+        const match = prediction.patternFound.match(/\[(.*?)\]/);
+        const patternStr = match ? match[1].replace(/ -> /g, ' ➔ ') : 'Global Statistics';
+        activePatternSummary.innerHTML = `<i class="fa-solid fa-circle-nodes info-icon" style="color: var(--color-purple)"></i> <span>Pattern Match: ${patternStr}</span>`;
+        
+        const occMatch = prediction.patternFound.match(/\((\d+) occurrences\)/);
+        const count = occMatch ? occMatch[1] : '0';
+        if (count !== '0') {
+          patternStatsText.textContent = `Out of ${count} historical occurrences of this sequence, ${prediction.probabilities[prediction.prediction]}% of the rounds resulted in a ${prediction.prediction} outcome.`;
+        } else {
+          patternStatsText.textContent = `Insufficient sequence history. Predictor falling back to global game distribution statistics.`;
+        }
+      }
     }
 
-    // 3. Update History Grid (if full engine history list exists, or fallback to last20Games)
-    const historyList = report.stats ? report.stats.totalGames > 0 ? report.stats : null : null;
-    
-    // We can populate the history grid. The report contains a list of historical multipliers.
-    // If backend sent the full list inside stats or if we fetch it. Let's make sure we have access.
-    // In our backend, we sent patternEngine.history as a whole or as part of stats?
-    // Let's check: patternEngine.history is the source of stats.
-    // Actually, report contains last20Games, and stats has totalGames. Let's make sure the backend sends the history.
-    // Wait! Let's check pattern-engine.js code. It contains getAnalysisReport which sends last20Games.
-    // Let's modify pattern-engine.js or send the history grid items directly.
-    // Since showing 300 games in grid is requested, let's render as many as we have.
-    // If the backend has full history, let's render the list.
-    // Let's see: patternEngine.history has up to 500 items. Let's check if the backend transmits this.
-    // In server.js, we emit analysis_report containing the output of getAnalysisReport().
-    // Let's check what getAnalysisReport sends:
-    // stats, prediction, last20Games.
-    // To support 300 games grid, let's modify getAnalysisReport to include the first 300 games from history!
-    // But wait, the client can render the history list. Let's make sure it handles both.
-    // If report has history, use it. Otherwise use last20Games.
-    const fullHistory = report.history || report.last300Games || report.last20Games || [];
-    
-    // Let's populate grid
+    // 3. Update History Grid
+    const fullHistory = last300Games || [];
     if (fullHistory.length > 0) {
       historyGrid.innerHTML = '';
       historyCounter.textContent = `Showing ${fullHistory.length} games`;
       
       fullHistory.forEach(item => {
-        let val = 1.00;
-        let cat = 'RED';
-        
-        if (typeof item === 'object') {
-          val = item.multiplier;
-          cat = item.category;
-        } else {
-          val = item;
-          if (val < 2.00) cat = 'RED';
-          else if (val < 10.00) cat = 'GREEN';
-          else cat = 'GOLD';
-        }
-        
         const cell = document.createElement('div');
-        cell.className = `grid-cell ${cat}`;
-        cell.textContent = `${val.toFixed(2)}x`;
-        cell.title = `Multiplier: ${val.toFixed(2)}x (${cat})`;
+        cell.className = `grid-cell ${item.category}`;
+        cell.textContent = `${item.multiplier.toFixed(2)}x`;
+        cell.title = `Multiplier: ${item.multiplier.toFixed(2)}x (${item.category})`;
         historyGrid.appendChild(cell);
       });
     }
 
     // 4. Update Trend Chart
-    // Extract raw multipliers (whether they are objects or floats)
-    const rawMultipliers = fullHistory.map(item => typeof item === 'object' ? item.multiplier : item);
+    const rawMultipliers = fullHistory.map(item => item.multiplier);
     trendChart.update(rawMultipliers);
   }
 
-  // Update circular gauge styles
   function updateGauge(gaugeEl, textEl, percentage, color) {
     if (!gaugeEl || !textEl) return;
     textEl.textContent = `${percentage}%`;
@@ -340,6 +677,31 @@ document.addEventListener('DOMContentLoaded', () => {
     gaugeEl.style.background = `conic-gradient(${color} 0deg, ${color} ${degrees}deg, rgba(255, 255, 255, 0.05) ${degrees}deg, rgba(255, 255, 255, 0.05) 360deg)`;
   }
 
-  // Initiate initial connection
-  connectSocket();
+  // Backup fallback stats polling
+  function startPollingFallback() {
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(async () => {
+      if (!isSimulating) {
+        await fetchHistory();
+      }
+    }, 10000);
+  }
+
+  // INITIALIZE SYSTEM CONNECTIONS
+  async function initSystem() {
+    stopSimulation();
+    
+    // Load history first
+    await fetchHistory();
+    
+    // Connect WebSockets
+    connectGameWS();
+    connectBroadcastWS();
+    
+    // Launch watchdogs
+    startWatchdog();
+    startPollingFallback();
+  }
+
+  initSystem();
 });

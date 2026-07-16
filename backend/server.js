@@ -37,6 +37,23 @@ app.get('/api/analysis', (req, res) => {
   }
 });
 
+app.post('/api/update-session', (req, res) => {
+  const { jsessionId } = req.body;
+  if (!jsessionId) {
+    return res.status(400).json({ error: 'jsessionId is required' });
+  }
+  
+  console.log(`[API] Received manual session key update request. Updating cookie...`);
+  wsClient.jsessionId = jsessionId;
+  process.env.JSESSIONID = jsessionId;
+  
+  // Trigger history fetch and reconnect
+  wsClient.fetchHistory();
+  wsClient.connect();
+  
+  res.json({ success: true, message: 'Session key updated, reconnecting...' });
+});
+
 // Create Server
 const server = http.createServer(app);
 

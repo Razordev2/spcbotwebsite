@@ -46,11 +46,10 @@
       </div>
       
       <div class="header-controls">
-        <!-- Hidden Server Config Toggle to protect endpoint address -->
-        <!-- <div class="server-config-toggle" id="serverConfigToggle" title="Configure Server Address" style="display:none;">
-          <i class="fa-solid fa-server"></i>
-          <span id="activeServerText">localhost:3001</span>
-        </div> -->
+        <div class="server-config-toggle" id="serverConfigToggle" title="Configure System Settings">
+          <i class="fa-solid fa-gear"></i>
+          <span>SETTINGS</span>
+        </div>
         <div class="connection-status offline" id="connectionStatus">
           <span class="status-dot"></span>
           <span class="status-text">DISCONNECTED</span>
@@ -275,20 +274,31 @@
     </footer>
   </div>
 
-  <!-- Server Configuration Modal -->
+  <!-- Settings & Session Configuration Modal -->
   <div class="modal" id="serverModal">
     <div class="modal-content">
-      <h3>Configure Backend URL</h3>
-      <p>Enter your hosted backend server URL. (e.g. <code>http://localhost:3001</code> or your Render/Railway backend URL)</p>
-      <input type="text" id="serverUrlInput" placeholder="http://localhost:3001">
+      <h3>System Settings</h3>
+      <p style="margin-bottom: 1.5rem;">Configure backend API server and active game session key.</p>
+      
+      <div style="text-align: left; margin-bottom: 1rem;">
+        <label style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Backend Server URL</label>
+        <input type="text" id="serverUrlInput" placeholder="http://localhost:3001" style="margin-bottom: 0;">
+      </div>
+      
+      <div style="text-align: left; margin-bottom: 1.5rem;">
+        <label style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Game Session ID (JSESSIONID)</label>
+        <input type="text" id="jsessionIdInput" placeholder="4-zi-uQtQxBda3Ny4wqpDKrdygkjtvK_YY34P_9Zd__G2jAb_-gn..." style="margin-bottom: 0;">
+      </div>
+
       <div class="modal-actions">
-        <button id="saveServerBtn" class="btn btn-primary">Connect</button>
+        <button id="saveServerBtn" class="btn btn-primary">Save & Apply</button>
         <button id="closeModalBtn" class="btn btn-secondary">Cancel</button>
       </div>
     </div>
   </div>
 
   <!-- Scripts -->
+  <script src="js/pattern-engine.js"></script>
   <script src="js/animation.js"></script>
   <script src="js/chart.js"></script>
   <script src="js/app.js"></script>

@@ -5,13 +5,7 @@ const patternEngine = require('./pattern-engine');
 
 dotenv.config();
 
-const JSESSIONID = process.env.JSESSIONID;
 const TABLE_ID = process.env.TABLE_ID || 'spacemanyxe123nh';
-
-// URLs
-const STATS_URL = `https://games.domxyrxsfevpzjeg.net/api/ui/statisticHistory?tableId=${TABLE_ID}&numberOfGames=300&JSESSIONID=${JSESSIONID}&game_mode=lobby_desktop`;
-const GAME_WS_URL = `wss://gs17.domxyrxsfevpzjeg.net/game?bcs=true&JSESSIONID=${encodeURIComponent(JSESSIONID)}&tableId=${TABLE_ID}`;
-const BROADCAST_WS_URL = `wss://broadcaster.domxyrxsfevpzjeg.net/broadcast?JSESSIONID=${encodeURIComponent(JSESSIONID)}&tableId=${TABLE_ID}`;
 
 class SpacemanWSClient {
   constructor(io) {
@@ -19,6 +13,7 @@ class SpacemanWSClient {
     this.gameWs = null;
     this.broadcastWs = null;
     this.pollInterval = null;
+    this.jsessionId = process.env.JSESSIONID;
     
     // Game state tracking
     this.currentGameState = {
@@ -39,11 +34,25 @@ class SpacemanWSClient {
     this.watchdogInterval = null;
   }
 
+  // Dynamic getters for API/WebSocket URLs using current active session key
+  get statsUrl() {
+    return `https://games.domxyrxsfevpzjeg.net/api/ui/statisticHistory?tableId=${TABLE_ID}&numberOfGames=300&JSESSIONID=${this.jsessionId}&game_mode=lobby_desktop`;
+  }
+  get gameWsUrl() {
+    return `wss://gs17.domxyrxsfevpzjeg.net/game?bcs=true&JSESSIONID=${encodeURIComponent(this.jsessionId)}&tableId=${TABLE_ID}`;
+  }
+  get broadcastWsUrl() {
+    return `wss://broadcaster.domxyrxsfevpzjeg.net/broadcast?JSESSIONID=${encodeURIComponent(this.jsessionId)}&tableId=${TABLE_ID}`;
+  }
+
   // Fetch initial history
   async fetchHistory() {
+    // Attempt to automatically extract JSESSIONID from Chrome on startup
+    await this.tryAutoDetectCookie();
+
     try {
       console.log(`[HTTP] Fetching history from statistic history API...`);
-      const response = await axios.get(STATS_URL, {
+      const response = await axios.get(this.statsUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Referer': 'https://eca004.kaca189b.online/crash',
@@ -53,16 +62,12 @@ class SpacemanWSClient {
       });
 
       if (response.data && response.data.history) {
-        // Map history to raw multipliers list
-        // response.data.history might look like [{result: "1.52", ...} or just numbers]
-        // Let's print structure info
         console.log(`[HTTP] History fetched successfully. Size: ${response.data.history.length}`);
         
         let multipliers = [];
         if (Array.isArray(response.data.history)) {
           multipliers = response.data.history.map(item => {
             if (typeof item === 'object' && item !== null) {
-              // Usually pragmatics results contain key "r" or "result" or "value"
               return parseFloat(item.r || item.result || item.value || 1.00);
             }
             return parseFloat(item);
@@ -74,14 +79,21 @@ class SpacemanWSClient {
           this.broadcastAnalysis();
         } else {
           console.warn(`[HTTP] Could not parse history array. Received structure:`, response.data.history.slice(0, 2));
-          // Fallback static history mock so dashboard works if credentials expired
           this.loadMockHistory();
         }
       } else {
-        console.warn(`[HTTP] Unexpected history response structure or expired JSESSIONID. Loading fallback local data.`);
+        console.warn(`[HTTP] Unexpected history response structure. Loading fallback local data.`);
         this.loadMockHistory();
       }
     } catch (error) {
+      if (error.response && error.response.status === 401) {
+        console.warn(`[HTTP] Expired session key (401). Attempting to auto-detect JSESSIONID from running Chrome browser...`);
+        const detected = await this.tryAutoDetectCookie();
+        if (detected) {
+          console.log(`[HTTP] Auto-detected fresh cookie. Retrying history fetch...`);
+          return this.fetchHistory();
+        }
+      }
       console.error(`[HTTP] Error fetching statistics history: ${error.message}. Loading fallback data.`);
       this.loadMockHistory();
     }
@@ -102,6 +114,23 @@ class SpacemanWSClient {
     this.broadcastAnalysis();
   }
 
+  // Grabs active session from remote debugging Chrome instance
+  async tryAutoDetectCookie() {
+    try {
+      const { autoDetectJSESSIONID } = require('./cookie-grabber');
+      const newCookie = await autoDetectJSESSIONID();
+      if (newCookie && newCookie !== this.jsessionId) {
+        console.log(`[AutoDetect] Fresh session key detected! Updating active JSESSIONID to: ${newCookie}`);
+        this.jsessionId = newCookie;
+        process.env.JSESSIONID = newCookie;
+        return true;
+      }
+    } catch (e) {
+      console.error(`[AutoDetect] Error loading grabber module:`, e.message);
+    }
+    return false;
+  }
+
   // Connect to both Websockets for maximum redundancy
   connect() {
     this.connectGameWS();
@@ -114,7 +143,7 @@ class SpacemanWSClient {
   connectGameWS() {
     console.log(`[WS] Connecting to Game WebSocket...`);
     try {
-      this.gameWs = new WebSocket(GAME_WS_URL, {
+      this.gameWs = new WebSocket(this.gameWsUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Origin': 'https://games.domxyrxsfevpzjeg.net'
@@ -130,9 +159,13 @@ class SpacemanWSClient {
         this.handleWSMessage(data.toString(), 'game');
       });
 
-      this.gameWs.on('close', (code, reason) => {
+      this.gameWs.on('close', async (code, reason) => {
         console.warn(`[WS] Game WebSocket closed (Code: ${code}, Reason: ${reason}). Reconnecting in 5s...`);
         this.io.emit('ws_status', { connected: false, socket: 'game' });
+        
+        // Auto-detect a fresh cookie upon disconnect to heal session immediately
+        await this.tryAutoDetectCookie();
+        
         setTimeout(() => this.connectGameWS(), 5000);
       });
 
@@ -148,7 +181,7 @@ class SpacemanWSClient {
   connectBroadcastWS() {
     console.log(`[WS] Connecting to Broadcaster WebSocket...`);
     try {
-      this.broadcastWs = new WebSocket(BROADCAST_WS_URL, {
+      this.broadcastWs = new WebSocket(this.broadcastWsUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Origin': 'https://broadcaster.domxyrxsfevpzjeg.net'
