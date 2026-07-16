@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spaceman Pattern Analysis Dashboard</title>
+  <!-- SEO Meta Tags -->
+  <meta name="description" content="Real-time Spaceman crash game statistics, pattern recognition, and predictive analytics dashboard. Track multipliers, streaks, and probabilities.">
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Plus+Jakarta+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Local Style -->
+  <link rel="stylesheet" href="css/style.css">
+  
+  <!-- Socket.IO and Chart.js CDNs -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  
+  <!-- Cosmic Background Particles -->
+  <div class="stars-container">
+    <div class="stars"></div>
+    <div class="stars2"></div>
+    <div class="stars3"></div>
+  </div>
+
+  <div class="app-container">
+    
+    <!-- Top Header -->
+    <header class="main-header">
+      <div class="logo-area">
+        <div class="logo-icon-wrapper">
+          <i class="fa-solid fa-user-astronaut logo-icon"></i>
+        </div>
+        <div class="logo-text">
+          <h1>SPACEMAN</h1>
+          <span>PATTERN PREDICTOR</span>
+        </div>
+      </div>
+      
+      <div class="header-controls">
+        <!-- Hidden Server Config Toggle to protect endpoint address -->
+        <!-- <div class="server-config-toggle" id="serverConfigToggle" title="Configure Server Address" style="display:none;">
+          <i class="fa-solid fa-server"></i>
+          <span id="activeServerText">localhost:3001</span>
+        </div> -->
+        <div class="connection-status offline" id="connectionStatus">
+          <span class="status-dot"></span>
+          <span class="status-text">DISCONNECTED</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Grid -->
+    <main class="dashboard-grid">
+      
+      <!-- Left Column: Live Animation & Realtime Multiplier -->
+      <section class="card live-card">
+        <div class="card-header">
+          <div class="header-title">
+            <span class="pulse-indicator"></span>
+            <h2>LIVE MULTIPLIER</h2>
+          </div>
+          <div class="game-id-badge">
+            <span id="gameId">ROUND #---</span>
+          </div>
+        </div>
+        
+        <div class="multiplier-display-container">
+          <!-- Live Canvas or Rocket Animation -->
+          <div class="animation-stage" id="animationStage">
+            <canvas id="spacemanCanvas"></canvas>
+            
+            <div class="multiplier-text-wrapper">
+              <div class="live-label" id="liveLabel">PREPARING</div>
+              <div class="live-value" id="liveMultiplier">1.00x</div>
+            </div>
+            
+            <div class="spaceman-avatar" id="spacemanAvatar">
+              <img src="https://img.icons8.com/color/256/astronaut.png" alt="Spaceman" class="astronaut-img">
+            </div>
+          </div>
+        </div>
+
+        <div class="live-game-footer">
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill" id="progressBarFill"></div>
+          </div>
+          <div class="status-info">
+            <span id="gameStageDescription">Waiting for next game to start...</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Predictor & Confidence Engine -->
+      <section class="card predictor-card">
+        <div class="card-header">
+          <div class="header-title">
+            <i class="fa-solid fa-brain accent-icon"></i>
+            <h2>PATTERN ENGINE</h2>
+          </div>
+          <span class="engine-badge">REAL-TIME</span>
+        </div>
+
+        <div class="prediction-box">
+          <div class="target-round-id" id="targetRoundId">PREDICTING ROUND: #---</div>
+          
+          <div class="prediction-main">
+            <span class="pred-title" id="predTitle">UPCOMING ROUND PREDICTION</span>
+            <div class="pred-result-display" id="predResult">
+              <span class="pred-value loading-dots" id="predValue">CALCULATING</span>
+            </div>
+            <div class="expected-multiplier" id="expectedMult">TARGET: --x</div>
+            <div class="recommendation-badge" id="recomBadge">WAIT</div>
+          </div>
+
+          <div class="active-pattern-summary" id="activePatternSummary">
+            <i class="fa-solid fa-circle-nodes info-icon"></i>
+            <span>Active Pattern: Waiting...</span>
+          </div>
+          
+          <div class="pattern-stats-text" id="patternStatsText">
+            Analyzing game history database...
+          </div>
+
+          <div class="confidence-meter-container">
+            <div class="meter-label">
+              <span>Confidence Score</span>
+              <span class="meter-val" id="confidenceVal">0%</span>
+            </div>
+            <div class="meter-track">
+              <div class="meter-fill" id="confidenceFill" style="width: 0%"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="probabilities-section">
+          <h3>PROBABILITY MATRIX</h3>
+          <div class="probability-bars">
+            <!-- Red Bar (<2x) -->
+            <div class="prob-row">
+              <div class="prob-info">
+                <span class="prob-label color-red"><i class="fa-solid fa-circle-chevron-down"></i> RED (&lt;2.00x)</span>
+                <span class="prob-percent" id="probRed">33%</span>
+              </div>
+              <div class="prob-track">
+                <div class="prob-fill bg-red" id="fillRed" style="width: 33%"></div>
+              </div>
+            </div>
+            
+            <!-- Green Bar (2x-10x) -->
+            <div class="prob-row">
+              <div class="prob-info">
+                <span class="prob-label color-green"><i class="fa-solid fa-circle-chevron-right"></i> GREEN (2.00x-9.99x)</span>
+                <span class="prob-percent" id="probGreen">33%</span>
+              </div>
+              <div class="prob-track">
+                <div class="prob-fill bg-green" id="fillGreen" style="width: 33%"></div>
+              </div>
+            </div>
+
+            <!-- Gold Bar (10x+) -->
+            <div class="prob-row">
+              <div class="prob-info">
+                <span class="prob-label color-gold"><i class="fa-solid fa-circle-chevron-up"></i> GOLD (10.00x+)</span>
+                <span class="prob-percent" id="probGold">34%</span>
+              </div>
+              <div class="prob-track">
+                <div class="prob-fill bg-gold" id="fillGold" style="width: 34%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Prediction detail analytics are shown in the main prediction box -->
+      </section>
+
+      <!-- Bottom Column 1: Historical Trend Chart -->
+      <section class="card chart-card">
+        <div class="card-header">
+          <div class="header-title">
+            <i class="fa-solid fa-chart-line chart-icon"></i>
+            <h2>GAME TREND ANALYTICS</h2>
+          </div>
+          <div class="chart-legend">
+            <span class="legend-item"><span class="legend-dot bg-red"></span> Red</span>
+            <span class="legend-item"><span class="legend-dot bg-green"></span> Green</span>
+            <span class="legend-item"><span class="legend-dot bg-gold"></span> Gold</span>
+          </div>
+        </div>
+        <div class="chart-body">
+          <canvas id="trendChart"></canvas>
+        </div>
+      </section>
+
+      <!-- Bottom Column 2: Stats & Distribution -->
+      <section class="card stats-card">
+        <div class="card-header">
+          <div class="header-title">
+            <i class="fa-solid fa-chart-pie stats-icon"></i>
+            <h2>GAME STATISTICS</h2>
+          </div>
+        </div>
+        
+        <div class="stats-grid">
+          <div class="stat-box">
+            <span class="stat-lbl">Average Multiplier</span>
+            <span class="stat-val" id="statAverage">0.00x</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-lbl">Total Games Tracked</span>
+            <span class="stat-val" id="statTotalGames">0</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-lbl">Current Streak</span>
+            <span class="stat-val" id="statStreak">---</span>
+          </div>
+        </div>
+
+        <div class="distribution-pies">
+          <div class="pie-container">
+            <div class="circular-progress red-progress" id="progressRed">
+              <span class="progress-value" id="percentRed">0%</span>
+            </div>
+            <span class="pie-lbl">RED (&lt;2x)</span>
+          </div>
+          
+          <div class="pie-container">
+            <div class="circular-progress green-progress" id="progressGreen">
+              <span class="progress-value" id="percentGreen">0%</span>
+            </div>
+            <span class="pie-lbl">GREEN (2x-10x)</span>
+          </div>
+
+          <div class="pie-container">
+            <div class="circular-progress gold-progress" id="progressGold">
+              <span class="progress-value" id="percentGold">0%</span>
+            </div>
+            <span class="pie-lbl">GOLD (10x+)</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Full Width: Pattern History Grid -->
+      <section class="card history-card">
+        <div class="card-header">
+          <div class="header-title">
+            <i class="fa-solid fa-clock-rotate-left history-icon"></i>
+            <h2>MULTIPLIER HISTORY (300 GAMES)</h2>
+          </div>
+          <div class="history-actions">
+            <span class="history-count" id="historyCounter">Showing 0 games</span>
+          </div>
+        </div>
+        <div class="history-grid-container">
+          <div class="history-grid" id="historyGrid">
+            <!-- JS will populate grid cells -->
+            <div class="history-grid-placeholder">Loading history data...</div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Footer Info -->
+    <footer class="main-footer">
+      <p>&copy; 2026 SPACEMAN PATTERN ANALYTICS ENGINE. ALL DATA READ IN REAL-TIME.</p>
+    </footer>
+  </div>
+
+  <!-- Server Configuration Modal -->
+  <div class="modal" id="serverModal">
+    <div class="modal-content">
+      <h3>Configure Backend URL</h3>
+      <p>Enter your hosted backend server URL. (e.g. <code>http://localhost:3001</code> or your Render/Railway backend URL)</p>
+      <input type="text" id="serverUrlInput" placeholder="http://localhost:3001">
+      <div class="modal-actions">
+        <button id="saveServerBtn" class="btn btn-primary">Connect</button>
+        <button id="closeModalBtn" class="btn btn-secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="js/animation.js"></script>
+  <script src="js/chart.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
